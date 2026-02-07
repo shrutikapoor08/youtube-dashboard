@@ -9,11 +9,14 @@
  */
 
 import { Graph, graphSchema } from "@/components/tambo/graph";
+import { YouTubeGraph, youtubeGraphSchema } from "@/components/tambo/youtube-graph";
 import { DataCard, dataCardSchema } from "@/components/ui/card-data";
 import {
-  getCountryPopulations,
-  getGlobalPopulationTrend,
-} from "@/services/population-stats";
+  getChannelMetrics,
+  getVideoPerformance,
+  getTrendingVideos,
+  getPerformanceInsights,
+} from "@/services/youtube-data";
 import type { TamboComponent } from "@tambo-ai/react";
 import { TamboTool } from "@tambo-ai/react";
 import { z } from "zod";
@@ -28,52 +31,90 @@ import { z } from "zod";
 
 export const tools: TamboTool[] = [
   {
-    name: "countryPopulation",
+    name: "getChannelMetrics",
     description:
-      "A tool to get population statistics by country with advanced filtering options",
-    tool: getCountryPopulations,
+      "Get YouTube channel performance metrics including total views, watch time, subscribers, and average view duration. Filter by period: '7d', '30d', or '90d'.",
+    tool: getChannelMetrics,
     inputSchema: z.object({
-      continent: z.string().optional(),
-      sortBy: z.enum(["population", "growthRate"]).optional(),
-      limit: z.number().optional(),
-      order: z.enum(["asc", "desc"]).optional(),
+      period: z.string().optional(),
     }),
     outputSchema: z.array(
       z.object({
-        countryCode: z.string(),
-        countryName: z.string(),
-        continent: z.enum([
-          "Asia",
-          "Africa",
-          "Europe",
-          "North America",
-          "South America",
-          "Oceania",
-        ]),
-        population: z.number(),
-        year: z.number(),
-        growthRate: z.number(),
+        name: z.string(),
+        value: z.number(),
+        unit: z.string(),
+        changePercent: z.number(),
+        trend: z.enum(["up", "down", "flat"]),
+        period: z.string(),
       }),
     ),
   },
   {
-    name: "globalPopulation",
+    name: "getVideoPerformance",
     description:
-      "A tool to get global population trends with optional year range filtering",
-    tool: getGlobalPopulationTrend,
+      "Get detailed performance data for YouTube videos including views, watch time, and engagement metrics. Can sort by 'views', 'watchTime', 'duration', or 'date'. Limit results with the limit parameter. Use this to analyze which videos perform best and identify successful content patterns.",
+    tool: getVideoPerformance,
     inputSchema: z.object({
-      startYear: z.number().optional(),
-      endYear: z.number().optional(),
+      limit: z.number().optional(),
+      sortBy: z.string().optional(),
     }),
     outputSchema: z.array(
       z.object({
-        year: z.number(),
-        population: z.number(),
-        growthRate: z.number(),
+        videoId: z.string(),
+        title: z.string(),
+        publishedAt: z.string(),
+        views: z.number(),
+        watchTimeHours: z.number(),
+        averageViewDuration: z.number(),
+        thumbnailUrl: z.string(),
+        category: z.string(),
       }),
     ),
   },
-  // Add more tools here
+  {
+    name: "getTrendingVideos",
+    description:
+      "Get trending YouTube videos filtered by category. Available categories: 'AI tutorials', 'Coding', 'Web Dev', 'Career Advice', 'Industry Trends'. Use this to explore what's popular in tech and job seeker content, identify emerging skills, and understand market demands.",
+    tool: getTrendingVideos,
+    inputSchema: z.object({
+      category: z.string().optional(),
+      limit: z.number().optional(),
+    }),
+    outputSchema: z.array(
+      z.object({
+        videoId: z.string(),
+        title: z.string(),
+        channelName: z.string(),
+        views: z.number(),
+        publishedAt: z.string(),
+        category: z.string(),
+        trendScore: z.number(),
+        thumbnailUrl: z.string(),
+        tags: z.array(z.string()),
+      }),
+    ),
+  },
+  {
+    name: "getPerformanceInsights",
+    description:
+      "Get insights about video performance patterns including best upload days, top performing topics, audience retention, and traffic sources. Use this to answer 'what am I learning about my audience' and discover patterns that help optimize content strategy.",
+    tool: getPerformanceInsights,
+    inputSchema: z.object({
+      metric: z.string().optional(),
+    }),
+    outputSchema: z.array(
+      z.object({
+        metric: z.string(),
+        description: z.string(),
+        data: z.array(
+          z.object({
+            label: z.string(),
+            value: z.number(),
+          }),
+        ),
+      }),
+    ),
+  },
 ];
 
 /**
@@ -98,5 +139,4 @@ export const components: TamboComponent[] = [
     component: DataCard,
     propsSchema: dataCardSchema,
   },
-  // Add more components here
 ];
