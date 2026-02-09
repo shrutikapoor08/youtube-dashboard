@@ -1,175 +1,199 @@
 "use client";
 
-import { CATEGORIES, CATEGORY_QUERIES, SORT_OPTIONS, DURATION_OPTIONS } from "@/lib/constants";
-import { getTrendingVideos, TrendingVideo } from "@/services/youtube-data";
-import { use, useState, useTransition, Suspense } from "react";
-import { CategoryPills } from "@/components/category-pills";
-import { VideoCard } from "@/components/video-card";
-import { VideoGridSkeleton } from "@/components/video-grid-skeleton";
+import { useState } from "react";
+import { Search, ChevronDown, ChevronRight } from "lucide-react";
+import CategoryPill from "./CategoryPill";
+import VideoGrid from "./VideoGrid";
+import { VideoCardProps } from "./VideoCard";
 
-// --- Data fetching ---
+const categories = [
+  "React",
+  "AI & ML",
+  "JavaScript",
+  "Tech Careers",
+  "Web Dev",
+  "Open Source",
+];
 
-function fetchVideos(category: string | null, sortBy: string): Promise<TrendingVideo[]> {
-    const query = category ? CATEGORY_QUERIES[category] || category : null;
+const sampleVideos: VideoCardProps[] = [
+  {
+    rank: 1,
+    thumbnail: "https://i.ytimg.com/vi/placeholder1/hqdefault.jpg",
+    title: "Why Replacing Developers with AI is Going Horribly Wrong",
+    channel: "MACKARD",
+    views: "1.8M",
+    timeAgo: "6 days ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 2,
+    thumbnail: "https://i.ytimg.com/vi/placeholder2/hqdefault.jpg",
+    title: "The wild rise of OpenClaw...",
+    channel: "FIRESHIP",
+    views: "1.3M",
+    timeAgo: "1 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 3,
+    thumbnail: "https://i.ytimg.com/vi/placeholder3/hqdefault.jpg",
+    title: "A brief history of programming...",
+    channel: "FIRESHIP",
+    views: "589K",
+    timeAgo: "2 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 4,
+    thumbnail: "https://i.ytimg.com/vi/placeholder4/hqdefault.jpg",
+    title: "I Read Honey's Source Code",
+    channel: "THE PRIMETIME",
+    views: "579K",
+    timeAgo: "3 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 5,
+    thumbnail: "https://i.ytimg.com/vi/placeholder5/hqdefault.jpg",
+    title: "Cursor Is Lying To Developers...",
+    channel: "BASIC DEV",
+    views: "280K",
+    timeAgo: "2 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 6,
+    thumbnail: "https://i.ytimg.com/vi/placeholder6/hqdefault.jpg",
+    title: "Learning to code has changed",
+    channel: "TECH WITH TIM",
+    views: "126K",
+    timeAgo: "1 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 7,
+    thumbnail: "https://i.ytimg.com/vi/placeholder7/hqdefault.jpg",
+    title: "How Hackers Crack Any Software With Reverse Engineering",
+    channel: "LOW LEVEL",
+    views: "400K",
+    timeAgo: "4 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 8,
+    thumbnail: "https://i.ytimg.com/vi/placeholder8/hqdefault.jpg",
+    title: "I Have Spent 500+ Hours Programming With AI. This is what I learned",
+    channel: "THE CODING SLOTH",
+    views: "258K",
+    timeAgo: "2 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 9,
+    thumbnail: "https://i.ytimg.com/vi/placeholder9/hqdefault.jpg",
+    title: "The Best Place to Learn AI in 2026? Coursera Tested",
+    channel: "JASON WEST",
+    views: "266K",
+    timeAgo: "3 weeks ago",
+  },
+  {
+    rank: 10,
+    thumbnail: "https://i.ytimg.com/vi/placeholder10/hqdefault.jpg",
+    title: "We Studied 150 Developers Using AI (Here's What's Actually Changed...)",
+    channel: "MODERN SOFTWARE ENGINEERING",
+    views: "75K",
+    timeAgo: "6 days ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 11,
+    thumbnail: "https://i.ytimg.com/vi/placeholder11/hqdefault.jpg",
+    title: "Is Learning to Code Still Worth It in 2026?",
+    channel: "ALBERTA TECH",
+    views: "266K",
+    timeAgo: "3 weeks ago",
+    rating: "Excellent",
+  },
+  {
+    rank: 12,
+    thumbnail: "https://i.ytimg.com/vi/placeholder12/hqdefault.jpg",
+    title: "Meet agentic coding in Xcode | Apple Developer",
+    channel: "APPLE DEVELOPER",
+    views: "75K",
+    timeAgo: "6 days ago",
+    rating: "Excellent",
+  },
+];
 
-    const fetcher = async (): Promise<TrendingVideo[]> => {
-        let allVideos: TrendingVideo[];
+interface TrendingTechVideosProps {
+  videos?: VideoCardProps[];
+}
 
-        if (!query) {
-            const [webDevVideos, aiVideos, codingVideos] = await Promise.all([
-                getTrendingVideos({ category: "Web Dev", limit: 12 }),
-                getTrendingVideos({ category: "AI tutorials", limit: 12 }),
-                getTrendingVideos({ category: "Coding", limit: 12 }),
-                getTrendingVideos({ category: "ReactJS", limit: 12 }),
-            ]);
-            allVideos = [...webDevVideos, ...aiVideos, ...codingVideos];
-        } else {
-            allVideos = await getTrendingVideos({ category: query, limit: 30 });
-        }
+export default function TrendingTechVideos({
+  videos = sampleVideos,
+}: TrendingTechVideosProps) {
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
-        const uniqueVideos = allVideos.filter(
-            (video, index, self) =>
-                index === self.findIndex((v) => v.videoId === video.videoId)
-        );
+  const filteredVideos = videos.filter((video) => {
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return (
+        video.title.toLowerCase().includes(query) ||
+        video.channel.toLowerCase().includes(query)
+      );
+    }
+    return true;
+  });
 
-        const sortedVideos = [...uniqueVideos].sort((a, b) => {
-            switch (sortBy) {
-                case "newest":
-                    return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
-                case "rated":
-                    return b.views - a.views;
-                case "relevant":
-                default:
-                    return b.trendScore - a.trendScore;
+  return (
+    <div className="flex-1 overflow-y-auto p-6">
+      {/* Search and filters */}
+      <div className="mb-6 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2">
+          <Search size={16} className="text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search for a video"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-48 text-sm outline-none placeholder:text-gray-400"
+          />
+        </div>
+        <button className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600">
+          Sort by <ChevronDown size={14} />
+        </button>
+        <button className="flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-600">
+          Duration <ChevronDown size={14} />
+        </button>
+      </div>
+
+      {/* Categories */}
+      <div className="mb-2 flex flex-wrap items-center justify-center gap-2">
+        {categories.map((cat) => (
+          <CategoryPill
+            key={cat}
+            label={cat}
+            isActive={activeCategory === cat}
+            onClick={() =>
+              setActiveCategory(activeCategory === cat ? null : cat)
             }
-        });
+          />
+        ))}
+      </div>
 
-        return sortedVideos.slice(0, 30);
-    };
+      {/* See all link */}
+      <div className="mb-6 flex justify-center">
+        <button className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700">
+          See all <ChevronRight size={14} />
+        </button>
+      </div>
 
-    return fetcher();
-}
+      {/* Section title */}
+      <h2 className="mb-4 text-xl font-bold">Newest Videos</h2>
 
-// --- Video grid (consumes promise with use()) ---
-
-function VideoGrid({
-    videosPromise,
-    searchQuery,
-    isPending,
-    playingVideo,
-    onTogglePlay,
-}: {
-    videosPromise: Promise<TrendingVideo[]>;
-    searchQuery: string;
-    isPending: boolean;
-    playingVideo: string | null;
-    onTogglePlay: (videoId: string) => void;
-}) {
-    const videos = use(videosPromise);
-
-    const filteredVideos = searchQuery
-        ? videos.filter(
-            (v) =>
-                v.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                v.channelName.toLowerCase().includes(searchQuery.toLowerCase())
-        )
-        : videos;
-
-    if (filteredVideos.length === 0) {
-        return <p className="text-gray-500 text-sm text-center py-12">No videos found</p>;
-    }
-
-    return (
-        <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-5 gap-y-8 transition-opacity ${isPending ? "opacity-50" : ""}`}>
-            {filteredVideos.map((video, index) => (
-                <VideoCard
-                    key={video.videoId}
-                    videoId={video.videoId}
-                    title={video.title}
-                    channelName={video.channelName}
-                    thumbnailUrl={video.thumbnailUrl}
-                    views={video.views}
-                    publishedAt={video.publishedAt}
-                    rank={index + 1}
-                    isPlaying={playingVideo === video.videoId}
-                    onTogglePlay={() => onTogglePlay(video.videoId)}
-                />
-            ))}
-        </div>
-    );
-}
-
-// --- Container ---
-
-export function TrendingTechVideos() {
-    const [activeCategory, setActiveCategory] = useState<string | null>(null);
-    const [sortBy, setSortBy] = useState("relevant");
-    const [searchQuery, setSearchQuery] = useState("");
-    const [playingVideo, setPlayingVideo] = useState<string | null>(null);
-    const [duration, setDuration] = useState("any");
-
-    const [isPending, startTransition] = useTransition();
-    const [videosPromise, setVideosPromise] = useState(() => fetchVideos(null, "relevant"));
-
-    function handleCategoryChange(category: string | null) {
-        setActiveCategory(category);
-        startTransition(() => {
-            setVideosPromise(fetchVideos(category, sortBy));
-        });
-    }
-
-    function handleSortChange(sort: string) {
-        setSortBy(sort);
-        startTransition(() => {
-            setVideosPromise(fetchVideos(activeCategory, sort));
-        });
-    }
-
-    return (
-        <div className="bg-white min-h-full">
-
-            {/* Category Pills */}
-            <CategoryPills
-                categories={CATEGORIES}
-                activeId={activeCategory}
-                onChange={handleCategoryChange}
-            />
-
-            {/* See all link */}
-            <div className="text-center my-auto">
-                <button
-                    onClick={() => handleCategoryChange(null)}
-                    className="text-sm text-gray-900 underline underline-offset-4 inline-flex items-center gap-1 hover:text-gray-600"
-                >
-                    See all
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                </button>
-            </div>
-
-            {/* Section Header */}
-            <div className="px-6 mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">
-                    {activeCategory
-                        ? CATEGORIES.find((c) => c.id === activeCategory)?.label || "Trending"
-                        : "Newest Videos"}
-                </h2>
-            </div>
-
-            {/* Video Grid */}
-            <div className="px-6 pb-8">
-
-                    <Suspense fallback={<VideoGridSkeleton />}>
-                        <VideoGrid
-                            videosPromise={videosPromise}
-                            searchQuery={searchQuery}
-                            isPending={isPending}
-                            playingVideo={playingVideo}
-                            onTogglePlay={(id) => setPlayingVideo(playingVideo === id ? null : id)}
-                        />
-                    </Suspense>
-               </div>
-        </div>
-    );
+      {/* Video grid */}
+      <VideoGrid videos={filteredVideos} />
+    </div>
+  );
 }
