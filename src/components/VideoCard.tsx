@@ -1,4 +1,7 @@
+import { z } from "zod";
 import VideoDescription from "./VideoDescription";
+import { withInteractable } from "@tambo-ai/react";
+
 
 export interface VideoCardProps {
   rank: number;
@@ -9,6 +12,19 @@ export interface VideoCardProps {
   timeAgo: string;
   rating?: string;
 }
+
+
+export const videoCardSchema = z.object({
+  videoId: z.string().describe("The YouTube video ID"),
+  title: z.string().describe("The video title"),
+  channelName: z.string().describe("The channel or category name"),
+  thumbnailUrl: z.string().describe("URL of the video thumbnail image"),
+  views: z.number().describe("Number of views"),
+  publishedAt: z.string().describe("ISO date string of when the video was published"),
+  rank: z.number().describe("Rank number to display as a badge"),
+  qualityScore: z.number().optional().describe("Quality score 0-100 based on engagement signals"),
+  href: z.string().optional().describe("Optional link URL to open on click"),
+});
 
 export default function VideoCard({
   rank,
@@ -41,3 +57,10 @@ export default function VideoCard({
     </div>
   );
 }
+
+export const InteractableVideoCard = withInteractable(VideoCard, {
+  componentName: "VideoCard",
+  description:
+    "A video card component that displays a YouTube video thumbnail with rank badge, title, channel name, view count, and publish date. Can link to YouTube or embed an inline player. Use this to display individual video results from trending or performance tools.",
+  propsSchema: videoCardSchema,
+});

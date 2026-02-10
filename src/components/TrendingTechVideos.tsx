@@ -27,7 +27,42 @@ export default function TrendingTechVideos() {
   const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
+    const CACHE_KEY = "trending_videos_cache";
+    const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+    function loadFromCache(): TrendingVideoResponse[] | null {
+      try {
+        const stored = localStorage.getItem(CACHE_KEY);
+        if (!stored) return null;
+        const { data, timestamp } = JSON.parse(stored);
+        if (Date.now() - timestamp > CACHE_TTL_MS) {
+          localStorage.removeItem(CACHE_KEY);
+          return null;
+        }
+        return data;
+      } catch {
+        return null;
+      }
+    }
+
+    function saveToCache(data: TrendingVideoResponse[]) {
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+      } catch {
+        // localStorage full or unavailable — ignore
+      }
+    }
+
     async function fetchVideos() {
+      // 1. Try client-side cache first
+      const cached = loadFromCache();
+      if (cached && cached.length > 0) {
+        setVideos(cached);
+        setLoading(false);
+        return;
+      }
+
+      // 2. Fetch from API (which has its own server-side cache)
       try {
         setLoading(true);
         setError(null);
@@ -38,6 +73,7 @@ export default function TrendingTechVideos() {
         }
         const data: TrendingVideoResponse[] = await res.json();
         setVideos(data);
+        saveToCache(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to fetch videos");
       } finally {

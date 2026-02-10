@@ -9,7 +9,9 @@
  */
 
 import { Graph, graphSchema } from "@/components/tambo/graph";
-import { YouTubeGraph, youtubeGraphSchema } from "@/components/tambo/youtube-graph";
+import { InteractableVideoCard, videoCardSchema } from "@/components/VideoCard";
+import { InteractableVideoGrid, videoGridSchema } from "@/components/VideoGrid";
+
 import { DataCard, dataCardSchema } from "@/components/ui/card-data";
 import {
   getChannelMetrics,
@@ -139,4 +141,18 @@ export const components: TamboComponent[] = [
     component: DataCard,
     propsSchema: dataCardSchema,
   },
+{
+    name: "VideoCard",
+  description: "A video card component that displays a YouTube video thumbnail with rank badge, title, channel name, view count, and publish date.Can link to YouTube or embed an inline player.Use this to display individual video results from trending or performance tools.",
+  component: InteractableVideoCard,
+  propsSchema: videoCardSchema
+},
+  {
+    name: "VideoGrid",
+    description:
+      "A responsive grid of video cards that displays YouTube videos in a 4-column layout. Supports client-side search filtering and pending state dimming. Use this to display collections of videos from trending or performance tools.",
+    component: InteractableVideoGrid,
+    propsSchema: videoGridSchema,
+  },
+
 ];

@@ -1,19 +1,7 @@
 import { NextResponse } from "next/server";
+import { MOCK_TRENDING_VIDEOS } from "@/services/mock-trending-data";
 
 // ==================== Types ====================
-
-interface YouTubeSearchItem {
-  id: { videoId: string };
-  snippet: {
-    title: string;
-    channelTitle: string;
-    publishedAt: string;
-    thumbnails: {
-      high?: { url: string };
-      default?: { url: string };
-    };
-  };
-}
 
 interface YouTubeVideoItem {
   id: string;
@@ -56,14 +44,8 @@ interface TrendingVideoResult {
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 const API_KEY = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY;
 
-const CATEGORY_QUERIES: Record<string, string> = {
-  React: "react javascript framework tutorial",
-  "AI & ML": "AI machine learning deep learning LLM",
-  JavaScript: "javascript typescript programming tutorial",
-  "Tech Careers": "tech career software developer job interview",
-  "Web Dev": "web development frontend backend fullstack",
-  "Open Source": "open source software project github",
-};
+// videoCategoryId 28 = Science & Technology
+const YOUTUBE_CATEGORY_ID = "28";
 
 // ==================== Server-side Cache ====================
 
@@ -92,9 +74,7 @@ function setCache(key: string, data: TrendingVideoResult[]) {
 // ==================== Quality Filters ====================
 
 const MIN_VIEWS = 5_000;
-const MIN_DURATION_SECONDS = 3 * 60; // 3 minutes — filters out shallow content
-const MIN_ENGAGEMENT_RATIO = 0.01; // 1% likes-to-views minimum
-const MIN_CHANNEL_SUBSCRIBERS = 1_000;
+const MIN_DURATION_SECONDS = 3 * 60; // 3 minutes
 
 function parseDurationSeconds(duration: string): number {
   const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
@@ -104,44 +84,6 @@ function parseDurationSeconds(duration: string): number {
     parseInt(match[2] || "0") * 60 +
     parseInt(match[3] || "0")
   );
-}
-
-function computeQualityScore(
-  views: number,
-  likes: number,
-  comments: number,
-  durationSeconds: number,
-  subscriberCount: number,
-): number {
-  const engagementRatio = views > 0 ? (likes + comments * 2) / views : 0;
-  const depthBonus = durationSeconds >= 10 * 60 ? 1.5 : durationSeconds >= 5 * 60 ? 1.2 : 1.0;
-  const reputationBonus = subscriberCount >= 100_000 ? 1.5 : subscriberCount >= 10_000 ? 1.2 : 1.0;
-  return views * engagementRatio * depthBonus * reputationBonus;
-}
-
-interface YouTubeChannelItem {
-  id: string;
-  statistics: {
-    subscriberCount: string;
-  };
-}
-
-async function getChannelSubscriberCounts(
-  channelIds: string[],
-): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
-  if (channelIds.length === 0) return map;
-
-  // YouTube API allows up to 50 channel IDs per request
-  const url = `${YOUTUBE_API_BASE}/channels?part=statistics&id=${channelIds.join(",")}&key=${API_KEY}`;
-  const res = await fetch(url);
-  if (!res.ok) return map;
-  const data = await res.json();
-
-  for (const item of (data.items || []) as YouTubeChannelItem[]) {
-    map.set(item.id, parseInt(item.statistics.subscriberCount || "0"));
-  }
-  return map;
 }
 
 // ==================== Helpers ====================
@@ -172,14 +114,8 @@ function isShort(item: YouTubeVideoItem): boolean {
   const tags = item.snippet.tags || [];
   if (tags.some((t) => t.toLowerCase() === "shorts" || t.toLowerCase() === "#shorts")) return true;
 
-  const match = item.contentDetails.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
-  if (match) {
-    const totalSeconds =
-      parseInt(match[1] || "0") * 3600 +
-      parseInt(match[2] || "0") * 60 +
-      parseInt(match[3] || "0");
-    if (totalSeconds <= 60) return true;
-  }
+  const totalSeconds = parseDurationSeconds(item.contentDetails.duration);
+  if (totalSeconds <= 60) return true;
 
   return false;
 }
@@ -191,94 +127,89 @@ function getRating(views: number): string {
   return "Good";
 }
 
+function categorizeVideo(title: string, tags: string[]): string {
+  const text = `${title} ${tags.join(" ")}`.toLowerCase();
+
+  if (text.includes("react") || text.includes("next.js") || text.includes("nextjs")) {
+    return "React";
+  }
+  if (text.includes("ai") || text.includes("machine learning") || text.includes("gpt") || text.includes("llm") || text.includes("deep learning")) {
+    return "AI & ML";
+  }
+  if (text.includes("career") || text.includes("interview") || text.includes("job") || text.includes("salary")) {
+    return "Tech Careers";
+  }
+  if (text.includes("javascript") || text.includes("typescript") || text.includes("node")) {
+    return "JavaScript";
+  }
+  if (text.includes("open source") || text.includes("github") || text.includes("contribute")) {
+    return "Open Source";
+  }
+  if (text.includes("css") || text.includes("html") || text.includes("web") || text.includes("frontend") || text.includes("backend")) {
+    return "Web Dev";
+  }
+  return "Web Dev";
+}
+
+// ==================== Error Classes ====================
+
+class YouTubeQuotaExceededError extends Error {
+  constructor() {
+    super("YouTube API quota exceeded");
+    this.name = "YouTubeQuotaExceededError";
+  }
+}
+
 // ==================== Fetch Logic ====================
 
-async function fetchCategoryVideos(
-  category: string,
-  query: string,
-  publishedAfter: string,
-): Promise<TrendingVideoResult[]> {
-  // Search for videos
-  const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(query + " -shorts")}&type=video&order=viewCount&maxResults=20&videoDuration=medium&relevanceLanguage=en&publishedAfter=${publishedAfter}&key=${API_KEY}`;
+/**
+ * Fetches trending videos using videos.list with chart=mostPopular.
+ * This costs only 1 quota unit (vs 100 for search.list).
+ */
+async function fetchTrendingVideos(): Promise<TrendingVideoResult[]> {
+  const url = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics,contentDetails&chart=mostPopular&regionCode=US&videoCategoryId=${YOUTUBE_CATEGORY_ID}&maxResults=50&key=${API_KEY}`;
 
-  const searchRes = await fetch(searchUrl);
-  if (!searchRes.ok) {
-    console.error(`YouTube search failed for "${category}": ${searchRes.status} ${searchRes.statusText}`);
+  const res = await fetch(url);
+  if (!res.ok) {
+    if (res.status === 403) {
+      throw new YouTubeQuotaExceededError();
+    }
+    console.error(`YouTube mostPopular fetch failed: ${res.status} ${res.statusText}`);
     return [];
   }
-  const searchData = await searchRes.json();
 
-  if (!searchData.items || searchData.items.length === 0) return [];
+  const data = await res.json();
+  if (!data.items || data.items.length === 0) return [];
 
-  // Get video details (statistics + contentDetails for filtering shorts)
-  const videoIds = searchData.items
-    .map((item: YouTubeSearchItem) => item.id.videoId)
-    .join(",");
+  const items = (data.items as YouTubeVideoItem[]).filter((item) => !isShort(item));
 
-  const detailsUrl = `${YOUTUBE_API_BASE}/videos?part=statistics,snippet,contentDetails&id=${videoIds}&key=${API_KEY}`;
-  const detailsRes = await fetch(detailsUrl);
-  if (!detailsRes.ok) return [];
-  const detailsData = await detailsRes.json();
+  const videos: TrendingVideoResult[] = items
+    .map((item) => {
+      const views = parseInt(item.statistics.viewCount || "0");
+      const durationSeconds = parseDurationSeconds(item.contentDetails.duration);
 
-  const nonShorts: YouTubeVideoItem[] = (detailsData.items || []).filter(
-    (item: YouTubeVideoItem) => !isShort(item),
-  );
+      return {
+        videoId: item.id,
+        title: item.snippet.title,
+        channel: item.snippet.channelTitle.toUpperCase(),
+        views: formatViews(views),
+        viewCount: views,
+        timeAgo: formatTimeAgo(item.snippet.publishedAt),
+        thumbnail:
+          item.snippet.thumbnails?.high?.url ||
+          item.snippet.thumbnails?.default?.url ||
+          "",
+        category: categorizeVideo(item.snippet.title, item.snippet.tags || []),
+        rank: 0,
+        rating: getRating(views),
+        _durationSeconds: durationSeconds,
+      };
+    })
+    .filter((v) => v.viewCount >= MIN_VIEWS && v._durationSeconds >= MIN_DURATION_SECONDS)
+    .sort((a, b) => b.viewCount - a.viewCount)
+    .map(({ _durationSeconds, ...rest }, i) => ({ ...rest, rank: i + 1 }));
 
-  if (nonShorts.length === 0) return [];
-
-  // Fetch channel subscriber counts for reputation filtering
-  const channelIds = [
-    ...new Set(nonShorts.map((item) => item.snippet.channelId)),
-  ];
-  const subscriberMap = await getChannelSubscriberCounts(channelIds);
-
-  interface ScoredVideo extends TrendingVideoResult {
-    _durationSeconds: number;
-    _engagementRatio: number;
-    _subscribers: number;
-    _qualityScore: number;
-  }
-
-  const scored: ScoredVideo[] = nonShorts.map((item) => {
-    const views = parseInt(item.statistics.viewCount || "0");
-    const likes = parseInt(item.statistics.likeCount || "0");
-    const comments = parseInt(item.statistics.commentCount || "0");
-    const durationSeconds = parseDurationSeconds(item.contentDetails.duration);
-    const subscribers = subscriberMap.get(item.snippet.channelId) || 0;
-    const engagementRatio = views > 0 ? likes / views : 0;
-    const qualityScore = computeQualityScore(views, likes, comments, durationSeconds, subscribers);
-
-    return {
-      videoId: item.id,
-      title: item.snippet.title,
-      channel: item.snippet.channelTitle.toUpperCase(),
-      views: formatViews(views),
-      viewCount: views,
-      timeAgo: formatTimeAgo(item.snippet.publishedAt),
-      thumbnail:
-        item.snippet.thumbnails?.high?.url ||
-        item.snippet.thumbnails?.default?.url ||
-        "",
-      category,
-      rank: 0,
-      rating: getRating(views),
-      _durationSeconds: durationSeconds,
-      _engagementRatio: engagementRatio,
-      _subscribers: subscribers,
-      _qualityScore: qualityScore,
-    };
-  });
-
-  return scored
-    .filter(
-      (v) =>
-        v.viewCount >= MIN_VIEWS &&
-        v._durationSeconds >= MIN_DURATION_SECONDS &&
-        v._engagementRatio >= MIN_ENGAGEMENT_RATIO &&
-        v._subscribers >= MIN_CHANNEL_SUBSCRIBERS,
-    )
-    .sort((a, b) => b._qualityScore - a._qualityScore)
-    .map(({ _durationSeconds, _engagementRatio, _subscribers, _qualityScore, ...rest }) => rest);
+  return videos;
 }
 
 // ==================== Route Handler ====================
@@ -300,36 +231,31 @@ export async function GET(request: Request) {
     return NextResponse.json(cached);
   }
 
-  const threeWeeksAgo = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString();
-
   try {
-    const categoriesToFetch = category
-      ? { [category]: CATEGORY_QUERIES[category] || category }
-      : CATEGORY_QUERIES;
+    const allVideos = await fetchTrendingVideos();
 
-    // Fetch all categories in parallel
-    const results = await Promise.all(
-      Object.entries(categoriesToFetch).map(([cat, query]) =>
-        fetchCategoryVideos(cat, query, threeWeeksAgo),
-      ),
-    );
+    // Cache the full result set
+    setCache("all", allVideos);
 
-    // Flatten, deduplicate by videoId, sort by views descending, and assign ranks
-    const seen = new Set<string>();
-    const allVideos = results
-      .flat()
-      .filter((v) => {
-        if (seen.has(v.videoId)) return false;
-        seen.add(v.videoId);
-        return true;
-      })
-      .sort((a, b) => b.viewCount - a.viewCount)
-      .map((v, i) => ({ ...v, rank: i + 1 }));
+    // Filter by category if requested
+    const result = category
+      ? allVideos.filter((v) => v.category === category)
+      : allVideos;
 
-    setCache(cacheKey, allVideos);
+    if (category) {
+      setCache(category, result);
+    }
 
-    return NextResponse.json(allVideos);
+    return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof YouTubeQuotaExceededError) {
+      console.warn("YouTube API quota exceeded — serving mock data as fallback.");
+      const filtered = category
+        ? MOCK_TRENDING_VIDEOS.filter((v) => v.category === category)
+        : MOCK_TRENDING_VIDEOS;
+      return NextResponse.json(filtered);
+    }
+
     console.error("YouTube API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch trending videos" },

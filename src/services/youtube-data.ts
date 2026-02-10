@@ -3,46 +3,9 @@
  * @description YouTube Data API v3 integration service for fetching channel metrics and videos
  */
 
-// ==================== TypeScript Interfaces ====================
+import type { VideoMetric, ChannelMetric, TrendingVideo, PerformanceInsight } from "./types";
 
-export interface VideoMetric {
-  videoId: string;
-  title: string;
-  publishedAt: string;
-  views: number;
-  watchTimeHours: number;
-  averageViewDuration: number; // seconds
-  thumbnailUrl: string;
-  category: string;
-}
-
-export interface ChannelMetric {
-  name: string;
-  value: number;
-  unit: string;
-  changePercent: number; // vs previous period
-  trend: "up" | "down" | "flat";
-  period: string; // "7d", "30d", "90d"
-}
-
-export interface TrendingVideo {
-  videoId: string;
-  title: string;
-  channelName: string;
-  views: number;
-  publishedAt: string;
-  category: string;
-  trendScore: number;
-  thumbnailUrl: string;
-  tags: string[];
-  duration: string;
-}
-
-export interface PerformanceInsight {
-  metric: string;
-  description: string;
-  data: { label: string; value: number }[];
-}
+export type { VideoMetric, ChannelMetric, TrendingVideo, PerformanceInsight };
 
 // ==================== YouTube API Configuration ====================
 
@@ -252,6 +215,41 @@ function calculateTrendScore(
   const viewsPerHour = views / Math.max(hoursOld, 1);
   const engagementBoost = likes ? (likes / views) * 100 : 0;
   return viewsPerHour + engagementBoost;
+}
+
+/**
+ * Calculate a quality score (0-100) based on engagement signals.
+ * - Like-to-view ratio (40% weight): >5% is excellent
+ * - Views velocity (30% weight): views per hour since publish
+ * - Duration sweet spot (30% weight): 5-20 min scores highest
+ */
+function calculateQualityScore(
+  views: number,
+  likes: number,
+  publishedAt: string,
+  durationSeconds: number,
+): number {
+  // Like-to-view ratio (0-40 points)
+  const likeRatio = views > 0 ? (likes / views) * 100 : 0;
+  const likeScore = Math.min(likeRatio / 5, 1) * 40;
+
+  // Views velocity (0-30 points)
+  const hoursOld = Math.max((Date.now() - new Date(publishedAt).getTime()) / (1000 * 60 * 60), 1);
+  const viewsPerHour = views / hoursOld;
+  const velocityScore = Math.min(viewsPerHour / 500, 1) * 30;
+
+  // Duration sweet spot: 5-20 min is ideal (0-30 points)
+  const durationMinutes = durationSeconds / 60;
+  let durationScore: number;
+  if (durationMinutes >= 5 && durationMinutes <= 20) {
+    durationScore = 30; // Sweet spot
+  } else if (durationMinutes >= 3 && durationMinutes <= 40) {
+    durationScore = 20; // Acceptable
+  } else {
+    durationScore = 10; // Too short or too long
+  }
+
+  return Math.round(likeScore + velocityScore + durationScore);
 }
 
 function categorizeVideo(title: string, tags: string[]): string {
@@ -510,7 +508,7 @@ export async function getTrendingVideos(params?: {
     const searchQuery = CATEGORY_QUERIES[category] || category;
     // Request more results to account for shorts being filtered out, and exclude shorts from search
     const maxResults = Math.min(limit * 2, 50);
-    const url = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(searchQuery + " -shorts")}&type=video&order=viewCount&maxResults=${maxResults}&videoDuration=medium&relevanceLanguage=en&key=${API_KEY}&publishedAfter=${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}`;
+    const url = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(searchQuery + " -shorts")}&type=video&order=viewCount&maxResults=${maxResults}&videoDuration=medium&relevanceLanguage=en&regionCode=US&key=${API_KEY}&publishedAfter=${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}`;
 
     const response = await fetchWithRetry(url);
     const data = await response.json();
@@ -533,7 +531,7 @@ export async function getTrendingVideos(params?: {
     }): boolean => {
       // Check for #shorts in title
       if (item.snippet.title.toLowerCase().includes("#shorts") ||
-          item.snippet.title.toLowerCase().includes("#short")) {
+        item.snippet.title.toLowerCase().includes("#short")) {
         return true;
       }
 
@@ -587,6 +585,7 @@ export async function getTrendingVideos(params?: {
         const h = parseInt(durationMatch?.[1] || "0");
         const m = parseInt(durationMatch?.[2] || "0");
         const s = parseInt(durationMatch?.[3] || "0");
+        const durationSeconds = h * 3600 + m * 60 + s;
         const duration = h > 0
           ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
           : `${m}:${String(s).padStart(2, "0")}`;
@@ -599,6 +598,7 @@ export async function getTrendingVideos(params?: {
           publishedAt,
           category,
           trendScore: calculateTrendScore(views, publishedAt, likes),
+          qualityScore: calculateQualityScore(views, likes, publishedAt, durationSeconds),
           thumbnailUrl:
             item.snippet.thumbnails?.high?.url ||
             item.snippet.thumbnails?.default?.url ||
@@ -716,8 +716,8 @@ export async function getPerformanceInsights(params?: {
     // Filter by specific metric if provided
     const filteredInsights = metric
       ? insights.filter((insight) =>
-          insight.metric.toLowerCase().includes(metric.toLowerCase()),
-        )
+        insight.metric.toLowerCase().includes(metric.toLowerCase()),
+      )
       : insights;
 
     // Cache the result
@@ -727,6 +727,136 @@ export async function getPerformanceInsights(params?: {
   } catch (error) {
     if (error instanceof YouTubeAPIError) throw error;
     throw new YouTubeAPIError("Failed to fetch performance insights.");
+  }
+}
+
+/**
+ * Search YouTube for videos by query with pagination support.
+ * Use this to fetch more videos on a topic, or to let the AI search for
+ * specific content the user asks about.
+ */
+export async function searchVideos(params?: {
+  query?: string;
+  pageToken?: string;
+  limit?: number;
+}): Promise<{ videos: TrendingVideo[]; nextPageToken?: string }> {
+  const query = params?.query || "tech tutorials";
+  const limit = params?.limit || 12;
+  const pageToken = params?.pageToken;
+  const cacheParams = { query, limit, pageToken: pageToken || "" };
+
+  const cached = apiCache.get<{ videos: TrendingVideo[]; nextPageToken?: string }>("searchVideos", cacheParams);
+  if (cached) return cached;
+
+  if (!API_KEY) {
+    throw new YouTubeAPIError(
+      "YouTube API key not configured. Please add NEXT_PUBLIC_YOUTUBE_API_KEY to your .env.local file.",
+    );
+  }
+
+  try {
+    const maxResults = Math.min(limit * 2, 50);
+    let url = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(query + " -shorts")}&type=video&order=viewCount&maxResults=${maxResults}&videoDuration=medium&relevanceLanguage=en&regionCode=US&key=${API_KEY}&publishedAfter=${new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()}`;
+
+    if (pageToken) {
+      url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    }
+
+    const response = await fetchWithRetry(url);
+    const data = await response.json();
+
+    if (!data.items || data.items.length === 0) {
+      return { videos: [], nextPageToken: undefined };
+    }
+
+    const videoIds = data.items.map((item: { id: { videoId: string } }) => item.id.videoId).join(",");
+    const statsUrl = `${YOUTUBE_API_BASE}/videos?part=statistics,snippet,contentDetails&id=${videoIds}&key=${API_KEY}`;
+    const statsResponse = await fetchWithRetry(statsUrl);
+    const statsData = await statsResponse.json();
+
+    const isShortVideo = (item: {
+      snippet: { title: string; tags?: string[] };
+      contentDetails: { duration: string };
+    }): boolean => {
+      if (item.snippet.title.toLowerCase().includes("#shorts") ||
+        item.snippet.title.toLowerCase().includes("#short")) {
+        return true;
+      }
+      const tags = item.snippet.tags || [];
+      if (tags.some(tag => tag.toLowerCase() === "shorts" || tag.toLowerCase() === "#shorts")) {
+        return true;
+      }
+      const match = item.contentDetails.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+      if (match) {
+        const totalSeconds = parseInt(match[1] || "0") * 3600 + parseInt(match[2] || "0") * 60 + parseInt(match[3] || "0");
+        if (totalSeconds <= 60) return true;
+      }
+      return false;
+    };
+
+    const videos: TrendingVideo[] = statsData.items
+      .filter((item: {
+        snippet: { title: string; tags?: string[] };
+        contentDetails: { duration: string };
+      }) => !isShortVideo(item))
+      .map((item: {
+        id: string;
+        snippet: {
+          title: string;
+          channelTitle: string;
+          publishedAt: string;
+          thumbnails: { high?: { url: string }; default?: { url: string } };
+          tags?: string[];
+        };
+        statistics: { viewCount: string; likeCount?: string };
+        contentDetails: { duration: string };
+      }) => {
+        const views = parseInt(item.statistics.viewCount || "0");
+        const likes = parseInt(item.statistics.likeCount || "0");
+        const publishedAt = item.snippet.publishedAt;
+
+        const durationMatch = item.contentDetails.duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+        const h = parseInt(durationMatch?.[1] || "0");
+        const m = parseInt(durationMatch?.[2] || "0");
+        const s = parseInt(durationMatch?.[3] || "0");
+        const durationSeconds = h * 3600 + m * 60 + s;
+        const duration = h > 0
+          ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+          : `${m}:${String(s).padStart(2, "0")}`;
+
+        return {
+          videoId: item.id,
+          title: item.snippet.title,
+          channelName: item.snippet.channelTitle,
+          views,
+          publishedAt,
+          category: categorizeVideo(item.snippet.title, item.snippet.tags || []),
+          trendScore: calculateTrendScore(views, publishedAt, likes),
+          qualityScore: calculateQualityScore(views, likes, publishedAt, durationSeconds),
+          thumbnailUrl:
+            item.snippet.thumbnails?.high?.url ||
+            item.snippet.thumbnails?.default?.url ||
+            "",
+          tags: item.snippet.tags || [],
+          duration,
+        };
+      });
+
+    videos.sort((a, b) => b.trendScore - a.trendScore);
+    const result = {
+      videos: videos.slice(0, limit),
+      nextPageToken: data.nextPageToken as string | undefined,
+    };
+
+    apiCache.set("searchVideos", cacheParams, result, CACHE_TTL.trendingVideos);
+
+    return result;
+  } catch (error) {
+    if (error instanceof YouTubeAPIError) throw error;
+    console.error("YouTube API Error:", error);
+    throw new YouTubeAPIError(
+      "Failed to search videos. Please check your API configuration.",
+    );
   }
 }
 
