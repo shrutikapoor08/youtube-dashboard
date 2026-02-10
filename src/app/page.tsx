@@ -1,9 +1,9 @@
 "use client";
 
-import { ChatSidebar } from "@/components/ChatSidebar";
-import { MyDashboard } from "@/components/MyDashboard";
-import { Tab } from "@/components/tab";
-import { TrendingTechVideos } from "@/components/TrendingTechVideos";
+import ChatSidebar from "@/components/ChatSidebar";
+import MyDashboard from "@/components/MyDashboard";
+import Tab from "@/components/Tab";
+import TrendingTechVideos from "@/components/TrendingTechVideos";
 import { useMcpServers } from "@/components/tambo/mcp-config-modal";
 import { components, tools } from "@/lib/tambo";
 import { TamboProvider } from "@tambo-ai/react";

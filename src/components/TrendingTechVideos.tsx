@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Search, ChevronDown, ChevronRight } from "lucide-react";
 import CategoryPill from "./CategoryPill";
 import VideoGrid from "./VideoGrid";
@@ -15,135 +15,45 @@ const categories = [
   "Open Source",
 ];
 
-const sampleVideos: VideoCardProps[] = [
-  {
-    rank: 1,
-    thumbnail: "https://i.ytimg.com/vi/placeholder1/hqdefault.jpg",
-    title: "Why Replacing Developers with AI is Going Horribly Wrong",
-    channel: "MACKARD",
-    views: "1.8M",
-    timeAgo: "6 days ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 2,
-    thumbnail: "https://i.ytimg.com/vi/placeholder2/hqdefault.jpg",
-    title: "The wild rise of OpenClaw...",
-    channel: "FIRESHIP",
-    views: "1.3M",
-    timeAgo: "1 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 3,
-    thumbnail: "https://i.ytimg.com/vi/placeholder3/hqdefault.jpg",
-    title: "A brief history of programming...",
-    channel: "FIRESHIP",
-    views: "589K",
-    timeAgo: "2 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 4,
-    thumbnail: "https://i.ytimg.com/vi/placeholder4/hqdefault.jpg",
-    title: "I Read Honey's Source Code",
-    channel: "THE PRIMETIME",
-    views: "579K",
-    timeAgo: "3 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 5,
-    thumbnail: "https://i.ytimg.com/vi/placeholder5/hqdefault.jpg",
-    title: "Cursor Is Lying To Developers...",
-    channel: "BASIC DEV",
-    views: "280K",
-    timeAgo: "2 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 6,
-    thumbnail: "https://i.ytimg.com/vi/placeholder6/hqdefault.jpg",
-    title: "Learning to code has changed",
-    channel: "TECH WITH TIM",
-    views: "126K",
-    timeAgo: "1 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 7,
-    thumbnail: "https://i.ytimg.com/vi/placeholder7/hqdefault.jpg",
-    title: "How Hackers Crack Any Software With Reverse Engineering",
-    channel: "LOW LEVEL",
-    views: "400K",
-    timeAgo: "4 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 8,
-    thumbnail: "https://i.ytimg.com/vi/placeholder8/hqdefault.jpg",
-    title: "I Have Spent 500+ Hours Programming With AI. This is what I learned",
-    channel: "THE CODING SLOTH",
-    views: "258K",
-    timeAgo: "2 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 9,
-    thumbnail: "https://i.ytimg.com/vi/placeholder9/hqdefault.jpg",
-    title: "The Best Place to Learn AI in 2026? Coursera Tested",
-    channel: "JASON WEST",
-    views: "266K",
-    timeAgo: "3 weeks ago",
-  },
-  {
-    rank: 10,
-    thumbnail: "https://i.ytimg.com/vi/placeholder10/hqdefault.jpg",
-    title: "We Studied 150 Developers Using AI (Here's What's Actually Changed...)",
-    channel: "MODERN SOFTWARE ENGINEERING",
-    views: "75K",
-    timeAgo: "6 days ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 11,
-    thumbnail: "https://i.ytimg.com/vi/placeholder11/hqdefault.jpg",
-    title: "Is Learning to Code Still Worth It in 2026?",
-    channel: "ALBERTA TECH",
-    views: "266K",
-    timeAgo: "3 weeks ago",
-    rating: "Excellent",
-  },
-  {
-    rank: 12,
-    thumbnail: "https://i.ytimg.com/vi/placeholder12/hqdefault.jpg",
-    title: "Meet agentic coding in Xcode | Apple Developer",
-    channel: "APPLE DEVELOPER",
-    views: "75K",
-    timeAgo: "6 days ago",
-    rating: "Excellent",
-  },
-];
-
-interface TrendingTechVideosProps {
-  videos?: VideoCardProps[];
+interface TrendingVideoResponse extends VideoCardProps {
+  category: string;
 }
 
-export default function TrendingTechVideos({
-  videos = sampleVideos,
-}: TrendingTechVideosProps) {
+export default function TrendingTechVideos() {
+  const [videos, setVideos] = useState<TrendingVideoResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
-  const filteredVideos = videos.filter((video) => {
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      return (
-        video.title.toLowerCase().includes(query) ||
-        video.channel.toLowerCase().includes(query)
-      );
+  useEffect(() => {
+    async function fetchVideos() {
+      try {
+        setLoading(true);
+        setError(null);
+        const res = await fetch("/api/youtube/trending");
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to fetch videos");
+        }
+        const data: TrendingVideoResponse[] = await res.json();
+        setVideos(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to fetch videos");
+      } finally {
+        setLoading(false);
+      }
     }
-    return true;
+
+    fetchVideos();
+  }, []);
+
+  const filteredVideos = videos.filter((video) => {
+    const matchesCategory = !activeCategory || video.category === activeCategory;
+    const matchesSearch = !searchQuery ||
+      video.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      video.channel.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesCategory && matchesSearch;
   });
 
   return (
@@ -192,8 +102,18 @@ export default function TrendingTechVideos({
       {/* Section title */}
       <h2 className="mb-4 text-xl font-bold">Newest Videos</h2>
 
-      {/* Video grid */}
-      <VideoGrid videos={filteredVideos} />
+      {/* Content */}
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-gray-400">
+          Loading trending videos...
+        </div>
+      ) : error ? (
+        <div className="flex items-center justify-center py-12 text-red-500">
+          {error}
+        </div>
+      ) : (
+        <VideoGrid videos={filteredVideos} />
+      )}
     </div>
   );
 }

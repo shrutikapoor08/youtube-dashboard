@@ -39,10 +39,6 @@ export default function MyDashboard() {
           </div>
         )}
 
-        <ChatSidebar
-          isOpen={sidebarOpen}
-          onToggle={() => setSidebarOpen(!sidebarOpen)}
-        />
       </div>
     </div>
   );
