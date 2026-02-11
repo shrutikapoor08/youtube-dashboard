@@ -4,6 +4,7 @@ interface VideoDescriptionProps {
   views: string;
   timeAgo: string;
   rating?: string;
+  summary?: string;
 }
 
 export default function VideoDescription({
@@ -12,6 +13,7 @@ export default function VideoDescription({
   views,
   timeAgo,
   rating,
+  summary,
 }: VideoDescriptionProps) {
   return (
     <div className="mt-2">

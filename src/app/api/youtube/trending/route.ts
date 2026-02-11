@@ -44,8 +44,19 @@ interface TrendingVideoResult {
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 const API_KEY = process.env.NEXT_PUBLIC_YOUTUBE_API_KEY;
 
-// videoCategoryId 28 = Science & Technology
-const YOUTUBE_CATEGORY_ID = "28";
+// Search queries targeting React & web development content
+const SEARCH_QUERIES = [
+  "react tutorial 2025",
+  "next.js web development",
+  "javascript frontend development",
+  "web development tutorial",
+  "react hooks components",
+  "CSS tailwind web design",
+  "typescript web development",
+  "node.js backend tutorial",
+  "frontend developer tips",
+  "HTML CSS JavaScript project",
+];
 
 // ==================== Server-side Cache ====================
 
@@ -163,31 +174,45 @@ class YouTubeQuotaExceededError extends Error {
 // ==================== Fetch Logic ====================
 
 /**
- * Fetches trending videos using videos.list with chart=mostPopular.
- * This costs only 1 quota unit (vs 100 for search.list).
+ * Fetches a batch of videos for a single search query.
+ * Uses search.list + videos.list to get full statistics.
  */
-async function fetchTrendingVideos(): Promise<TrendingVideoResult[]> {
-  const url = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics,contentDetails&chart=mostPopular&regionCode=US&videoCategoryId=${YOUTUBE_CATEGORY_ID}&maxResults=50&key=${API_KEY}`;
+async function fetchVideosForQuery(query: string): Promise<TrendingVideoResult[]> {
+  // Search for videos (returns up to 15 per query)
+  const searchUrl = `${YOUTUBE_API_BASE}/search?part=snippet&q=${encodeURIComponent(query + " -shorts")}&type=video&order=viewCount&maxResults=15&videoDuration=medium&relevanceLanguage=en&regionCode=US&publishedAfter=${new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()}&key=${API_KEY}`;
 
-  const res = await fetch(url);
-  if (!res.ok) {
-    if (res.status === 403) {
+  const searchRes = await fetch(searchUrl);
+  if (!searchRes.ok) {
+    if (searchRes.status === 403) {
       throw new YouTubeQuotaExceededError();
     }
-    console.error(`YouTube mostPopular fetch failed: ${res.status} ${res.statusText}`);
+    console.error(`YouTube search failed for "${query}": ${searchRes.status}`);
     return [];
   }
 
-  const data = await res.json();
-  if (!data.items || data.items.length === 0) return [];
+  const searchData = await searchRes.json();
+  if (!searchData.items || searchData.items.length === 0) return [];
 
-  const items = (data.items as YouTubeVideoItem[]).filter((item) => !isShort(item));
+  // Get full video details (statistics + contentDetails)
+  const videoIds = searchData.items
+    .map((item: { id: { videoId: string } }) => item.id.videoId)
+    .join(",");
+  const detailsUrl = `${YOUTUBE_API_BASE}/videos?part=snippet,statistics,contentDetails&id=${videoIds}&key=${API_KEY}`;
 
-  const videos: TrendingVideoResult[] = items
+  const detailsRes = await fetch(detailsUrl);
+  if (!detailsRes.ok) {
+    if (detailsRes.status === 403) throw new YouTubeQuotaExceededError();
+    return [];
+  }
+
+  const detailsData = await detailsRes.json();
+  if (!detailsData.items) return [];
+
+  return (detailsData.items as YouTubeVideoItem[])
+    .filter((item) => !isShort(item))
     .map((item) => {
       const views = parseInt(item.statistics.viewCount || "0");
       const durationSeconds = parseDurationSeconds(item.contentDetails.duration);
-
       return {
         videoId: item.id,
         title: item.snippet.title,
@@ -205,11 +230,45 @@ async function fetchTrendingVideos(): Promise<TrendingVideoResult[]> {
         _durationSeconds: durationSeconds,
       };
     })
-    .filter((v) => v.viewCount >= MIN_VIEWS && v._durationSeconds >= MIN_DURATION_SECONDS)
-    .sort((a, b) => b.viewCount - a.viewCount)
-    .map(({ _durationSeconds, ...rest }, i) => ({ ...rest, rank: i + 1 }));
+    .filter((v: { viewCount: number; _durationSeconds: number }) => v.viewCount >= MIN_VIEWS && v._durationSeconds >= MIN_DURATION_SECONDS);
+}
 
-  return videos;
+/**
+ * Fetches 30-60 trending videos across multiple React & web dev search queries.
+ * Runs queries in parallel, deduplicates, sorts by views, and assigns ranks.
+ */
+async function fetchTrendingVideos(): Promise<TrendingVideoResult[]> {
+  const results = await Promise.allSettled(
+    SEARCH_QUERIES.map((query) => fetchVideosForQuery(query)),
+  );
+
+  // Collect all videos, deduplicating by videoId
+  const seen = new Set<string>();
+  const allVideos: (TrendingVideoResult & { _durationSeconds: number })[] = [];
+
+  for (const result of results) {
+    if (result.status === "rejected") {
+      // Re-throw quota errors so the caller can fall back to mock data
+      if (result.reason instanceof YouTubeQuotaExceededError) {
+        throw result.reason;
+      }
+      continue;
+    }
+    for (const video of result.value) {
+      if (!seen.has(video.videoId)) {
+        seen.add(video.videoId);
+        allVideos.push(video as TrendingVideoResult & { _durationSeconds: number });
+      }
+    }
+  }
+
+  // Sort by views descending and assign ranks
+  allVideos.sort((a, b) => b.viewCount - a.viewCount);
+
+  return allVideos.map(({ _durationSeconds, ...rest }, i) => ({
+    ...rest,
+    rank: i + 1,
+  }));
 }
 
 // ==================== Route Handler ====================
